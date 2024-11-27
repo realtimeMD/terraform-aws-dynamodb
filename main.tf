@@ -21,6 +21,17 @@ locals {
   from_index = length(var.range_key) > 0 ? 0 : 1
 
   attributes_final = slice(local.attributes, local.from_index, length(local.attributes))
+
+  # Build replica configurations
+  replica_configurations = length(var.replica_configurations) > 0 ? var.replica_configurations : [
+    for region in var.replicas : {
+      region = region
+      # If kms_key_arn is null, the provider uses the default key
+      kms_key_arn            = null
+      propagate_tags         = false
+      point_in_time_recovery = false
+    }
+  ] 
 }
 
 resource "null_resource" "global_secondary_index_names" {
@@ -53,8 +64,8 @@ resource "aws_dynamodb_table" "default" {
   write_capacity              = var.billing_mode == "PAY_PER_REQUEST" ? null : var.autoscale_min_write_capacity
   hash_key                    = var.hash_key
   range_key                   = var.range_key
-  stream_enabled              = length(var.replicas) > 0 ? true : var.enable_streams
-  stream_view_type            = length(var.replicas) > 0 || var.enable_streams ? var.stream_view_type : ""
+  stream_enabled              = length(var.replica_configurations) > 0 ? true : var.enable_streams
+  stream_view_type            = length(var.replica_configurations) > 0 || var.enable_streams ? var.stream_view_type : ""
   table_class                 = var.table_class
   deletion_protection_enabled = var.deletion_protection_enabled
 
@@ -132,13 +143,12 @@ resource "aws_dynamodb_table" "default" {
   }
 
   dynamic "replica" {
-    for_each = var.replicas
+    for_each = local.replica_configurations
     content {
-      region_name = replica.value
-      # If kms_key_arn is null, the provider uses the default key
-      kms_key_arn            = null
-      propagate_tags         = false
-      point_in_time_recovery = false
+      kms_key_arn            = replica.value.kms_key_arn
+      point_in_time_recovery = replica.value.point_in_time_recovery
+      propagate_tags         = replica.value.propagate_tags
+      region_name            = replica.value.region
     }
   }
 
